@@ -61,7 +61,7 @@ module.exports = async (req, res) => {
 
     const currentContent = Buffer.from(fileData.content, "base64").toString("utf8");
     const timestamp = new Date().toISOString().replace("T", " ").substring(0, 16);
-    const newEntry = `\n- ${timestamp} — ${text.trim()}`;
+    const newEntry = `\n\n---\n- ${timestamp} — ${text.trim()}`;
     const newContent = currentContent + newEntry;
     const encodedContent = Buffer.from(newContent).toString("base64");
 
