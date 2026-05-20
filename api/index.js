@@ -5,17 +5,79 @@ const REPO_NAME = process.env.REPO_NAME;
 const FILE_PATH = process.env.FILE_PATH;
 const AUTH_SECRET = process.env.AUTH_SECRET;
 
+async function githubRequest(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: "api.github.com",
+      path,
+      method,
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        "User-Agent": "vault-capture",
+        "Content-Type": "application/json",
+        Accept: "application/vnd.github+json",
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error("Failed to parse GitHub response: " + data));
+        }
+      });
+    });
+    req.on("error", reject);
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method Not Allowed");
   }
 
-  return res.status(200).json({
-    hasToken: !!GITHUB_TOKEN,
-    hasOwner: !!REPO_OWNER,
-    hasRepo: !!REPO_NAME,
-    hasPath: !!FILE_PATH,
-    hasSecret: !!AUTH_SECRET,
-    secretMatch: req.body?.secret === AUTH_SECRET
-  });
+  const { secret, text } = req.body;
+  if (!secret || secret !== AUTH_SECRET) {
+    return res.status(401).send("Unauthorized");
+  }
+
+  if (!text || text.trim() === "") {
+    return res.status(400).send("No text provided");
+  }
+
+  try {
+    const fileData = await githubRequest(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`
+    );
+
+    if (!fileData.content) {
+      return res.status(500).send("Error: could not read file. GitHub response: " + JSON.stringify(fileData));
+    }
+
+    const currentContent = Buffer.from(fileData.content, "base64").toString("utf8");
+    const timestamp = new Date().toISOString().replace("T", " ").substring(0, 16);
+    const newEntry = `\n- ${timestamp} — ${text.trim()}`;
+    const newContent = currentContent + newEntry;
+    const encodedContent = Buffer.from(newContent).toString("base64");
+
+    await githubRequest(
+      "PUT",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`,
+      {
+        message: `inbox: capture from iPhone`,
+        content: encodedContent,
+        sha: fileData.sha,
+      }
+    );
+
+    return res.status(200).send("OK");
+  } catch (err) {
+    console.error(err);
+    return res.status(500).send("Error: " + err.message);
+  }
 };
